@@ -4,30 +4,42 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+import gdown
+import tempfile
+from pathlib import Path
 
-st.set_page_config(page_title="每日股票篩選器 · GDrive 版", layout="wide")
+st.set_page_config(page_title="每日股票篩選器 · GDrive 版（穩定下載）", layout="wide")
 
 # ----------------------------
 # Utils
 # ----------------------------
-def gdrive_file_url(file_id: str) -> str:
-    """轉換 Google Drive FILE_ID 為可讀取的直連 URL"""
-    return f"https://drive.google.com/uc?export=download&id={file_id}"
+def gdrive_direct_url(file_id: str) -> str:
+    return f"https://drive.google.com/uc?id={file_id}"
 
-@st.cache_data(ttl=1800, show_spinner="讀取資料中…")
-def load_data_from_gdrive(file_id: str) -> pd.DataFrame:
-    url = gdrive_file_url(file_id)
-    # 嘗試多種常見編碼
+@st.cache_data(ttl=1800, show_spinner="從 Google Drive 下載 CSV…")
+def download_from_gdrive(file_id: str) -> str:
+    """使用 gdown 下載檔案到暫存資料夾，回傳本機路徑"""
+    url = gdrive_direct_url(file_id)
+    out_path = Path(tempfile.gettempdir()) / f"xq_{file_id}.csv"
+    # gdown 會處理大型檔案 confirm token 等情況
+    gdown.download(url, str(out_path), quiet=True, fuzzy=True)
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        raise RuntimeError("下載失敗，請確認 FILE_ID 與分享權限（任何知道連結者可檢視）。")
+    return str(out_path)
+
+def try_read_csv_local(path: str) -> pd.DataFrame:
     last_err = None
     for enc in ["cp950", "big5", "utf-8"]:
         try:
-            df = pd.read_csv(url, encoding=enc, low_memory=False)
-            break
+            return pd.read_csv(path, encoding=enc, low_memory=False)
         except Exception as e:
             last_err = e
-            df = None
-    if df is None:
-        raise RuntimeError(f"讀取失敗：{last_err}")
+    raise RuntimeError(f"讀取 CSV 失敗：{last_err}")
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_data(file_id: str) -> pd.DataFrame:
+    csv_path = download_from_gdrive(file_id)
+    df = try_read_csv_local(csv_path)
 
     # 日期轉換
     if "日期" not in df.columns:
@@ -41,7 +53,7 @@ def load_data_from_gdrive(file_id: str) -> pd.DataFrame:
     if "商品" not in df.columns:
         df["商品"] = ""
 
-    # 將可能含逗號或字串的數值欄轉為數值
+    # 清理數值欄
     def to_numeric(series):
         return pd.to_numeric(
             series.astype(str)
@@ -60,12 +72,10 @@ def load_data_from_gdrive(file_id: str) -> pd.DataFrame:
         if c in df.columns:
             df[c] = to_numeric(df[c])
 
-    # 排序
     df = df.sort_values(["代碼","日期"]).reset_index(drop=True)
     return df
 
 def calc_abnormal_volume(df: pd.DataFrame, lookback: int = 5) -> pd.DataFrame:
-    """計算每檔的歷史均量（排除當日，用 shift(1)），新增欄位 '均量N'、'量能倍數'。"""
     if "成交量" not in df.columns:
         raise RuntimeError("缺少『成交量』欄位")
     df = df.copy()
@@ -85,29 +95,23 @@ def section_title(title: str, help_text: str = ""):
             st.caption(help_text)
 
 # ----------------------------
-# Sidebar · Settings
+# Sidebar
 # ----------------------------
 st.sidebar.header("📦 資料來源（Google Drive）")
-default_file_id = st.sidebar.text_input(
+file_id = st.sidebar.text_input(
     "Google Drive FILE_ID",
     value="",
-    help=(
-        "上傳 XQ.csv 到 Google Drive → 取得分享連結，形如 "
-        "'https://drive.google.com/file/d/FILE_ID/view?usp=sharing'，把 FILE_ID 貼到這裡。"
-    )
+    help="分享連結形如 'https://drive.google.com/file/d/FILE_ID/view'，貼上中間的 FILE_ID"
 )
-
-if not default_file_id:
+if not file_id:
     st.info("請在左側輸入 Google Drive 的 FILE_ID 後開始。")
     st.stop()
 
-df = load_data_from_gdrive(default_file_id)
-
-# 先計算一次量能異常（預設 5 日）
+# 載入與前處理
+df = load_data(file_id)
 df = calc_abnormal_volume(df, lookback=5)
 
 st.sidebar.header("⚙️ 篩選條件")
-# 日期選擇（轉 Python date，避免 numpy.datetime64 型別問題）
 py_dates = df["日期"].dropna().sort_values().dt.date.unique()
 default_date_py = py_dates[-1] if len(py_dates) else None
 sel_date = st.sidebar.date_input("選擇日期", value=default_date_py)
@@ -122,7 +126,7 @@ vol_multiple = st.sidebar.number_input("量能倍數門檻（≥）", 1.0, 20.0,
 # 依選擇重算量能視窗
 df = calc_abnormal_volume(df, lookback=int(vol_lookback))
 
-# 取當日資料
+# 當日資料
 mask_day = df["日期"].dt.date == sel_date
 day = df.loc[mask_day].copy()
 
@@ -176,9 +180,7 @@ else:
 # ----------------------------
 section_title("個股走勢（互動）", "從上面的表格挑股票或直接輸入代碼")
 codes_today = sorted(day["代碼"].dropna().unique().tolist())
-col_a, col_b = st.columns([1,1])
-with col_a:
-    sel_code = st.text_input("輸入股票代碼", value=(codes_today[0] if codes_today else ""))
+sel_code = st.text_input("輸入股票代碼", value=(codes_today[0] if codes_today else ""))
 
 if sel_code:
     hist = df[df["代碼"] == sel_code].copy()
@@ -210,4 +212,4 @@ if sel_code:
             ).properties(height=180)
             st.altair_chart(chart_vol, use_container_width=True)
 
-st.caption("資料來源：Google Drive XQ.csv（公開共享連結）。建議每日更新後重新整理頁面。")
+st.caption("資料來源：Google Drive XQ.csv（需開啟『知道連結者可檢視』）。若下載失敗，請檢查 FILE_ID 與權限或稍後重試。")

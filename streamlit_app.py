@@ -7,9 +7,7 @@ import gdown
 import tempfile, os, io, csv, re
 from pathlib import Path
 from datetime import datetime, timedelta
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+# 移除plotly依賴，改用streamlit內建圖表功能
 
 st.set_page_config(page_title="進階股票市場分析系統", layout="wide", initial_sidebar_state="expanded")
 
@@ -314,43 +312,34 @@ with tab1:
             if len(limit_up_stocks) > 1:
                 st.subheader("漲停股分析圖表")
                 
-                fig = make_subplots(
-                    rows=2, cols=2,
-                    subplot_titles=("漲幅分布", "成交量分布", "產業分布", "價位分布"),
-                    specs=[[{"type": "histogram"}, {"type": "histogram"}],
-                           [{"type": "pie"}, {"type": "histogram"}]]
-                )
+                col1, col2 = st.columns(2)
+                with col1:
+                    # 漲幅分布
+                    st.write("📊 漲幅分布")
+                    st.bar_chart(limit_up_stocks["漲跌幅"])
+                    
+                    # 產業分布
+                    if "商品" in limit_up_stocks.columns:
+                        st.write("🏭 產業分布")
+                        industry_dist = limit_up_stocks["商品"].str[:2].value_counts()
+                        st.bar_chart(industry_dist)
                 
-                # 漲幅分布
-                fig.add_trace(
-                    go.Histogram(x=limit_up_stocks["漲跌幅"], name="漲幅分布", nbinsx=10),
-                    row=1, col=1
-                )
-                
-                # 成交量分布
-                if "成交量" in limit_up_stocks.columns:
-                    fig.add_trace(
-                        go.Histogram(x=limit_up_stocks["成交量"], name="成交量分布", nbinsx=10),
-                        row=1, col=2
-                    )
-                
-                # 產業分布 (簡化版)
-                if "商品" in limit_up_stocks.columns:
-                    industry_dist = limit_up_stocks["商品"].str[:2].value_counts()
-                    fig.add_trace(
-                        go.Pie(labels=industry_dist.index, values=industry_dist.values, name="產業"),
-                        row=2, col=1
-                    )
-                
-                # 價位分布
-                if "收盤價" in limit_up_stocks.columns:
-                    fig.add_trace(
-                        go.Histogram(x=limit_up_stocks["收盤價"], name="價位分布", nbinsx=10),
-                        row=2, col=2
-                    )
-                
-                fig.update_layout(height=800, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    # 成交量分布
+                    if "成交量" in limit_up_stocks.columns:
+                        st.write("📈 成交量分布")
+                        chart_data = limit_up_stocks[["代碼", "成交量"]].set_index("代碼")
+                        st.bar_chart(chart_data)
+                    
+                    # 價位分布
+                    if "收盤價" in limit_up_stocks.columns:
+                        st.write("💰 價位分布")
+                        price_chart = alt.Chart(limit_up_stocks).mark_bar().encode(
+                            x=alt.X("收盤價:Q", bin=True, title="收盤價"),
+                            y="count()",
+                            tooltip=["count()"]
+                        ).properties(height=300)
+                        st.altair_chart(price_chart, use_container_width=True)
         else:
             st.info("當日沒有符合條件的漲停股")
     else:
@@ -422,29 +411,21 @@ with tab2:
             if "漲跌幅" in concept_df.columns and len(concept_df) > 1:
                 st.subheader("概念股表現視覺化")
                 
-                fig = px.bar(
-                    concept_df, 
-                    x="商品", 
-                    y="漲跌幅",
-                    title=f"{selected_concept} 概念股今日表現",
-                    color="漲跌幅",
-                    color_continuous_scale=["red", "gray", "green"]
-                )
-                fig.update_layout(height=500)
-                st.plotly_chart(fig, use_container_width=True)
+                # 概念股表現柱狀圖
+                chart_data = concept_df[["商品", "漲跌幅"]].set_index("商品")
+                st.bar_chart(chart_data)
                 
                 # 權重與表現散點圖
                 if "成交量" in concept_df.columns:
-                    fig2 = px.scatter(
-                        concept_df,
-                        x="權重",
-                        y="漲跌幅",
-                        size="成交量",
-                        hover_name="商品",
-                        title="權重vs表現分析",
-                        labels={"權重": "概念股權重", "漲跌幅": "今日漲跌幅(%)"}
-                    )
-                    st.plotly_chart(fig2, use_container_width=True)
+                    st.write("權重vs表現分析")
+                    scatter_chart = alt.Chart(concept_df).mark_circle(size=60).encode(
+                        x=alt.X("權重:Q", title="概念股權重"),
+                        y=alt.Y("漲跌幅:Q", title="今日漲跌幅(%)"),
+                        size=alt.Size("成交量:Q", scale=alt.Scale(range=[100, 400])),
+                        color=alt.Color("漲跌幅:Q", scale=alt.Scale(scheme="redyellowgreen")),
+                        tooltip=["商品", "權重", "漲跌幅", "成交量"]
+                    ).properties(height=400)
+                    st.altair_chart(scatter_chart, use_container_width=True)
         else:
             st.info(f"當日沒有 {selected_concept} 概念股的交易資料")
 
@@ -504,72 +485,51 @@ with tab3:
             st.subheader("技術分析圖表")
             
             if "收盤價" in recent_data.columns:
-                # 價格與成交量圖表
-                fig = make_subplots(
-                    rows=2, cols=1,
-                    shared_xaxes=True,
-                    vertical_spacing=0.1,
-                    subplot_titles=('股價走勢', '成交量'),
-                    row_width=[0.7, 0.3]
-                )
+                col1, col2 = st.columns(2)
                 
-                # 股價線圖
-                fig.add_trace(
-                    go.Scatter(
-                        x=recent_data["日期"],
-                        y=recent_data["收盤價"],
-                        name="收盤價",
-                        line=dict(color="blue")
-                    ),
-                    row=1, col=1
-                )
-                
-                # 移動平均線
-                if len(recent_data) >= 5:
-                    ma5 = recent_data["收盤價"].rolling(5).mean()
-                    fig.add_trace(
-                        go.Scatter(
-                            x=recent_data["日期"],
-                            y=ma5,
-                            name="MA5",
-                            line=dict(color="orange", dash="dash")
-                        ),
-                        row=1, col=1
-                    )
-                
-                if len(recent_data) >= 10:
-                    ma10 = recent_data["收盤價"].rolling(10).mean()
-                    fig.add_trace(
-                        go.Scatter(
-                            x=recent_data["日期"],
-                            y=ma10,
-                            name="MA10",
-                            line=dict(color="red", dash="dash")
-                        ),
-                        row=1, col=1
-                    )
-                
-                # 成交量柱狀圖
-                if "成交量" in recent_data.columns:
-                    colors = ['red' if row["漲跌幅"] >= 0 else 'green' 
-                             for _, row in recent_data.iterrows()] if "漲跌幅" in recent_data.columns else 'blue'
+                with col1:
+                    st.write("股價走勢圖")
+                    # 創建價格走勢圖
+                    price_chart = alt.Chart(recent_data).mark_line(point=True).encode(
+                        x=alt.X("日期:T", title="日期"),
+                        y=alt.Y("收盤價:Q", title="收盤價"),
+                        tooltip=["日期", "收盤價"]
+                    ).properties(height=300)
                     
-                    fig.add_trace(
-                        go.Bar(
-                            x=recent_data["日期"],
-                            y=recent_data["成交量"],
-                            name="成交量",
-                            marker_color=colors
-                        ),
-                        row=2, col=1
-                    )
+                    # 如果有足夠資料，添加移動平均線
+                    if len(recent_data) >= 5:
+                        recent_data["MA5"] = recent_data["收盤價"].rolling(5).mean()
+                        ma5_chart = alt.Chart(recent_data).mark_line(color="orange", strokeDash=[5, 5]).encode(
+                            x="日期:T",
+                            y="MA5:Q"
+                        )
+                        price_chart = price_chart + ma5_chart
+                    
+                    if len(recent_data) >= 10:
+                        recent_data["MA10"] = recent_data["收盤價"].rolling(10).mean()
+                        ma10_chart = alt.Chart(recent_data).mark_line(color="red", strokeDash=[10, 5]).encode(
+                            x="日期:T",
+                            y="MA10:Q"
+                        )
+                        price_chart = price_chart + ma10_chart
+                    
+                    st.altair_chart(price_chart, use_container_width=True)
                 
-                fig.update_layout(height=600, title=f"{stock_code} 技術分析")
-                fig.update_xaxes(title_text="日期", row=2, col=1)
-                fig.update_yaxes(title_text="價格", row=1, col=1)
-                fig.update_yaxes(title_text="成交量", row=2, col=1)
-                
-                st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    # 成交量柱狀圖
+                    if "成交量" in recent_data.columns:
+                        st.write("成交量分析")
+                        volume_chart = alt.Chart(recent_data).mark_bar().encode(
+                            x=alt.X("日期:T", title="日期"),
+                            y=alt.Y("成交量:Q", title="成交量"),
+                            color=alt.condition(
+                                alt.datum["漲跌幅"] >= 0,
+                                alt.value("red"),
+                                alt.value("green")
+                            ) if "漲跌幅" in recent_data.columns else alt.value("blue"),
+                            tooltip=["日期", "成交量", "漲跌幅"]
+                        ).properties(height=300)
+                        st.altair_chart(volume_chart, use_container_width=True)
                 
                 # 量能分析
                 if "成交量" in recent_data.columns:
@@ -634,26 +594,29 @@ with tab4:
     
     with col1:
         # 權重分布
-        fig_pie = px.pie(
-            portfolio_df, 
-            values="權重", 
-            names="商品",
-            title="投資組合權重分布"
-        )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.write("投資組合權重分布")
+        weight_chart = alt.Chart(portfolio_df).mark_arc().encode(
+            theta=alt.Theta("權重:Q"),
+            color=alt.Color("商品:N"),
+            tooltip=["商品", "權重"]
+        ).properties(height=300)
+        st.altair_chart(weight_chart, use_container_width=True)
     
     with col2:
         # 損益表現
+        st.write("個股損益表現")
         portfolio_df["損益數值"] = portfolio_df["損益"].str.replace("%", "").str.replace("+", "").astype(float)
-        fig_bar = px.bar(
-            portfolio_df,
-            x="商品",
-            y="損益數值",
-            title="個股損益表現",
-            color="損益數值",
-            color_continuous_scale=["red", "gray", "green"]
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
+        profit_chart = alt.Chart(portfolio_df).mark_bar().encode(
+            x=alt.X("商品:N", title="股票"),
+            y=alt.Y("損益數值:Q", title="損益(%)"),
+            color=alt.condition(
+                alt.datum["損益數值"] >= 0,
+                alt.value("green"),
+                alt.value("red")
+            ),
+            tooltip=["商品", "損益數值"]
+        ).properties(height=300)
+        st.altair_chart(profit_chart, use_container_width=True)
 
 # ----------------------------
 # 全域個股查詢

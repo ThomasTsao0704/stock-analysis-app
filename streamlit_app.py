@@ -7,7 +7,6 @@ import gdown
 import tempfile, os, io, csv, re
 from pathlib import Path
 from datetime import datetime, timedelta, date
-import plotly.express as px
 
 st.set_page_config(page_title="整合股票分析系統", layout="wide", initial_sidebar_state="expanded")
 

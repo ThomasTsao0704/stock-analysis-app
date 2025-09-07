@@ -937,6 +937,7 @@ if not market_data_loaded:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: gray; padding: 20px;'>
+    <p> 1iYzALB8Gt7yu1tTUgtJMtpQS9mgWvLrxhw8lGEYHxAA </p>
     <p>📊 整合股票市場分析與紀錄系統 | 結合市場數據載入與個人分析紀錄管理</p>
     <p>💡 提示：確認檔案權限設為『知道連結者可檢視』，檔案包含日期(YYYYMMDD)與代碼欄位</p>
     <p>🔗 支援功能：漲跌股分析 ➤ 概念股追蹤 ➤ 技術分析 ➤ 個人紀錄管理 ➤ 整合分析視圖</p>
